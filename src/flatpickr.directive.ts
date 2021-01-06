@@ -39,11 +39,7 @@ export const FLATPICKR_CONTROL_VALUE_ACCESSOR: any = {
 
 @Directive({
   selector: '[mwlFlatpickr]',
-  providers: [FLATPICKR_CONTROL_VALUE_ACCESSOR],
-  host: {
-    // tslint:disable-line use-host-property-decorator
-    '(blur)': 'onTouchedFn()'
-  }
+  providers: [FLATPICKR_CONTROL_VALUE_ACCESSOR]
 })
 export class FlatpickrDirective
   implements AfterViewInit, OnChanges, OnDestroy, ControlValueAccessor {
@@ -326,16 +322,23 @@ export class FlatpickrDirective
   private instance: flatpickr.Instance;
   private isDisabled = false;
   private initialValue: any;
-
-  onChangeFn: (value: any) => void = () => {}; // tslint:disable-line
-
-  onTouchedFn = () => {};
+  private destroyed = false;
 
   constructor(
     private elm: ElementRef,
     private defaults: FlatpickrDefaults,
     private renderer: Renderer2
-  ) {}
+  ) { }
+
+  onChangeFn: (value: any) => void = () => { }; // tslint:disable-line
+
+  @HostListener('blur')
+  onBlur() {
+    this.onTouchedFn();
+  }
+
+  onTouchedFn = () => { };
+
 
   ngAfterViewInit(): void {
     const options: any = {
@@ -439,14 +442,31 @@ export class FlatpickrDirective
 
     // workaround bug in flatpickr 4.6 where it doesn't copy the classes across
     // TODO - remove once fix in https://github.com/flatpickr/flatpickr/issues/1860 is released
-    options.altInputClass =
-      (options.altInputClass || '') + ' ' + this.elm.nativeElement.className;
+    // options.altInputClass =
+    //   (options.altInputClass || '') + ' ' + this.elm.nativeElement.className;
 
     this.instance = flatpickr(
       this.elm.nativeElement,
       options
     ) as flatpickr.Instance;
     this.setDisabledState(this.isDisabled);
+    if (options.altInput) {
+      // If altInput is active, blur event handler is not called by default, because it is fired when
+      // the hidden input is blurred - so we call it manually. Also style changes are watched with a
+      // MutationObserver in order to reflect style changes (e.g. red border) immediately as well.
+      const elem = this.elm.nativeElement as HTMLElement;
+      const altInput = elem.parentNode.querySelector('input[type=text]') as HTMLElement;
+      this.renderer.listen(altInput, 'blur', (event: FocusEvent) => {
+        this.onTouchedFn();
+      });
+      const obs = new MutationObserver(() => {
+        altInput.className = `${options.altInputClass}  ${this.elm.nativeElement.className}`;
+      });
+      obs.observe(this.elm.nativeElement, {
+        attributes: true,
+        attributeFilter: ['class'],
+      });
+    }
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -458,9 +478,10 @@ export class FlatpickrDirective
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
     if (this.instance) {
-		this.instance.destroy();
-	}
+      this.instance.destroy();
+    }
   }
 
   writeValue(value: any): void {
@@ -469,7 +490,7 @@ export class FlatpickrDirective
       convertedValue = [value.from, value.to];
     }
 
-    if (this.instance) {
+    if (this.instance && !this.destroyed) {
       this.instance.setDate(convertedValue);
     } else {
       // flatpickr hasn't been initialised yet, store the value for later use
